@@ -29,16 +29,16 @@ business.
 ## Architecture (current)
 
 ```
-Client (curl / browser)
-        │
-        ▼
-BusinessController   (REST layer — @RestController)
-        │              │
-        ▼              ▼
-BusinessRepository   RuleEngine   (pure logic — @Component, no DB/HTTP dependency)
-        │
-        ▼
-PostgreSQL            (Business table)
+Client (curl / browser)                    @Scheduled (daily, 01:00)
+        │                                           │
+        ▼                                           ▼
+BusinessController   (REST layer)          DeadlineSyncService
+        │              │                            │      │
+        ▼              ▼                            ▼      ▼
+BusinessRepository   RuleEngine  ◄──────────────────┘   DeadlineRecordRepository
+        │            (pure logic, no DB/HTTP dependency)         │
+        ▼                                                        ▼
+PostgreSQL   (business, work_pass, deadline_record tables)
 ```
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
@@ -60,12 +60,24 @@ PostgreSQL            (Business table)
   (list), and `GET /api/businesses/{id}/deadlines` (compute and return that business's current
   deadlines via `RuleEngine`, including any work-pass renewals) over HTTP.
 - **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
+- **`DeadlineRecord`** — persisted counterpart to `rules.Deadline`. Adds the one thing pure
+  computation can't carry: state, specifically `reminderSent`. `rules.Deadline` itself stays
+  a pure in-memory value with no DB knowledge.
+- **`DeadlineRecordRepository`** — Spring Data JPA repository for `DeadlineRecord`, including
+  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check) and
+  `findByReminderSentFalseAndDueDateLessThanEqual` (the "what needs a reminder" query).
+- **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
+  01:00) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
+  persists any not already stored, skipping ones that already exist so `reminderSent` isn't
+  reset. Also exposes `findDueSoonAndUnreminded(referenceDate, daysAhead)`, which the dispatch
+  step ([issue #12](https://github.com/Chrainx/compliance-tracker/issues/12)) will call next to
+  decide what actually gets pushed to the reminder queue.
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
-- **Scheduled dispatch** — a periodic job detects deadlines coming due, enqueues reminder
-  jobs on AWS SQS; a worker consumes the queue and sends notifications, with idempotency
-  (no duplicate sends on retry) and dead-letter handling (give up gracefully after N failures).
+- **Queue dispatch** — push due-soon, unreminded deadlines onto AWS SQS; a worker consumes the
+  queue and sends notifications, with idempotency (no duplicate sends on retry) and dead-letter
+  handling (give up gracefully after N failures).
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres.
 - **Load testing** — real throughput/latency numbers against the deployed system.
 
