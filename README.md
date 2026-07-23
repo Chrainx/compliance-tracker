@@ -60,6 +60,17 @@ PostgreSQL            (Business table)
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres.
 - **Load testing** — real throughput/latency numbers against the deployed system.
 
+### Compliance rules (sourced, not yet implemented)
+
+| Obligation | Rule | Source | Known limitation |
+|---|---|---|---|
+| ACRA Annual Return | `financialYearEnd + 7 months` | [ACRA — Deadline & requirements](https://www.acra.gov.sg/manage/companies/legal-requirements-common-offences/filing-annual-returns-companies/deadline-requirements/) | Listed-company variant (5/6 months) not modeled — SME target audience is virtually always private/non-listed |
+| GST F5 filing | `calendarQuarterEnd + 1 month` | [IRAS — Due dates and extensions](https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/filing-gst/due-dates-and-requests-for-extension) | Assumes standard calendar quarters; IRAS actually assigns a per-business cycle at GST registration which may not align to calendar quarters |
+| Employment Pass renewal | `= passExpiryDate` (renewal window opens 6 months prior, no grace period after expiry) | [MOM — Renew a Pass (Employment Pass)](https://www.mom.gov.sg/passes-and-permits/employment-pass/renew-a-pass) | Structural gap, not just a simplification: `Business` has no concept of employees/work passes yet — needs a new `WorkPass` entity before this rule can be computed |
+
+This is a reminder/tracking tool, not compliance advice — always verify against the official
+source before relying on a date (see disclaimer above).
+
 ## Running locally
 
 Requires Java 21, Maven, and Docker.
