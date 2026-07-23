@@ -33,9 +33,9 @@ Client (curl / browser)
         │
         ▼
 BusinessController   (REST layer — @RestController)
-        │
-        ▼
-BusinessRepository   (Spring Data JPA — auto-implemented interface)
+        │              │
+        ▼              ▼
+BusinessRepository   RuleEngine   (pure logic — @Component, no DB/HTTP dependency)
         │
         ▼
 PostgreSQL            (Business table)
@@ -46,27 +46,34 @@ PostgreSQL            (Business table)
 - **`BusinessRepository`** — Spring Data JPA repository interface. Extending `JpaRepository`
   gives `save`/`findAll`/`findById`/etc. for free, with no method bodies written — Spring
   generates the implementation at runtime.
-- **`BusinessController`** — exposes `POST /api/businesses` (create) and
-  `GET /api/businesses` (list) over HTTP.
+- **`RuleEngine`** — pure, unit-tested Java logic (`rules` package). Given a `Business` and a
+  reference date, computes the list of currently-applicable `Deadline`s (each an
+  `ObligationType` + due `LocalDate`). Has no dependency on the database or HTTP layer, and
+  takes the reference date as a parameter rather than calling `LocalDate.now()` internally, so
+  tests are fully deterministic. Currently implements ACRA Annual Return and GST F5 — Employment
+  Pass renewal is blocked on a `WorkPass` entity not yet built (see [issue #2](https://github.com/Chrainx/compliance-tracker/issues/2)).
+- **`BusinessController`** — exposes `POST /api/businesses` (create), `GET /api/businesses`
+  (list), and `GET /api/businesses/{id}/deadlines` (compute and return that business's current
+  deadlines via `RuleEngine`) over HTTP.
 - **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
-- **Rule engine** — pure Java logic that takes a `Business` and computes its upcoming
-  `Deadline`s, based on rules sourced from official ACRA/IRAS/MOM pages.
+- **`WorkPass` entity** — to model employee work-pass expiry dates, needed to complete the
+  Employment Pass rule.
 - **Scheduled dispatch** — a periodic job detects deadlines coming due, enqueues reminder
   jobs on AWS SQS; a worker consumes the queue and sends notifications, with idempotency
   (no duplicate sends on retry) and dead-letter handling (give up gracefully after N failures).
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres.
 - **Load testing** — real throughput/latency numbers against the deployed system.
 
-### Compliance rules (sourced, not yet implemented)
+### Compliance rules
 
-| Obligation | Rule | Source | Known limitation |
+| Obligation | Rule | Source | Status |
 |---|---|---|---|
-| ACRA Annual Return | `financialYearEnd + 7 months` | [ACRA — Deadline & requirements](https://www.acra.gov.sg/manage/companies/legal-requirements-common-offences/filing-annual-returns-companies/deadline-requirements/) | Listed-company variant (5/6 months) not modeled — SME target audience is virtually always private/non-listed |
-| GST F5 filing | `calendarQuarterEnd + 1 month` | [IRAS — Due dates and extensions](https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/filing-gst/due-dates-and-requests-for-extension) | Assumes standard calendar quarters; IRAS actually assigns a per-business cycle at GST registration which may not align to calendar quarters |
-| Employment Pass renewal | `= passExpiryDate` (renewal window opens 6 months prior, no grace period after expiry) | [MOM — Renew a Pass (Employment Pass)](https://www.mom.gov.sg/passes-and-permits/employment-pass/renew-a-pass) | Structural gap, not just a simplification: `Business` has no concept of employees/work passes yet — needs a new `WorkPass` entity before this rule can be computed |
+| ACRA Annual Return | `financialYearEnd + 7 months` | [ACRA — Deadline & requirements](https://www.acra.gov.sg/manage/companies/legal-requirements-common-offences/filing-annual-returns-companies/deadline-requirements/) | Implemented. Listed-company variant (5/6 months) not modeled — SME target audience is virtually always private/non-listed |
+| GST F5 filing | `calendarQuarterEnd + 1 month` | [IRAS — Due dates and extensions](https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/filing-gst/due-dates-and-requests-for-extension) | Implemented. Assumes standard calendar quarters; IRAS actually assigns a per-business cycle at GST registration which may not align to calendar quarters |
+| Employment Pass renewal | `= passExpiryDate` (renewal window opens 6 months prior, no grace period after expiry) | [MOM — Renew a Pass (Employment Pass)](https://www.mom.gov.sg/passes-and-permits/employment-pass/renew-a-pass) | Not implemented — needs a new `WorkPass` entity; `Business` has no concept of employees/work passes yet |
 
 This is a reminder/tracking tool, not compliance advice — always verify against the official
 source before relying on a date (see disclaimer above).
@@ -88,11 +95,12 @@ The app will be available at `http://localhost:8081`.
 
 ## API
 
-| Method | Path               | Description               |
-|--------|--------------------|----------------------------|
-| GET    | `/hello`           | Smoke-test endpoint        |
-| POST   | `/api/businesses`  | Create a business          |
-| GET    | `/api/businesses`  | List all businesses        |
+| Method | Path                          | Description                                |
+|--------|-------------------------------|---------------------------------------------|
+| GET    | `/hello`                      | Smoke-test endpoint                         |
+| POST   | `/api/businesses`             | Create a business                           |
+| GET    | `/api/businesses`             | List all businesses                         |
+| GET    | `/api/businesses/{id}/deadlines` | Compute and return that business's current compliance deadlines |
 
 Example:
 
@@ -100,6 +108,9 @@ Example:
 curl -X POST http://localhost:8081/api/businesses \
   -H "Content-Type: application/json" \
   -d '{"name": "Test Cafe Pte Ltd", "financialYearEnd": "2026-12-31", "gstRegistered": true}'
+
+curl http://localhost:8081/api/businesses/1/deadlines
+# [{"obligationType":"ACRA_ANNUAL_RETURN","dueDate":"2027-07-31"},{"obligationType":"GST_F5","dueDate":"2026-10-30"}]
 ```
 
 ## Testing
