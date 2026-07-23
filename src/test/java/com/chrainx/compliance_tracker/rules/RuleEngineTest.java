@@ -1,9 +1,11 @@
 package com.chrainx.compliance_tracker.rules;
 
 import com.chrainx.compliance_tracker.Business;
+import com.chrainx.compliance_tracker.WorkPass;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,7 +22,7 @@ class RuleEngineTest {
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         business.setGstRegistered(false);
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, LocalDate.of(2026, 1, 1));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 1, 1));
 
         Deadline acra = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
@@ -37,7 +39,7 @@ class RuleEngineTest {
         business.setGstRegistered(true);
 
         // Reference date falls in Q1 (Jan-Mar) -> quarter end 2026-03-31 -> deadline 2026-04-30
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, LocalDate.of(2026, 2, 15));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 2, 15));
 
         Deadline gst = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.GST_F5)
@@ -53,9 +55,34 @@ class RuleEngineTest {
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         business.setGstRegistered(false);
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, LocalDate.of(2026, 2, 15));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 2, 15));
 
         assertFalse(deadlines.stream().anyMatch(d -> d.getObligationType() == ObligationType.GST_F5));
         assertTrue(deadlines.stream().anyMatch(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN));
+    }
+
+    @Test
+    void eachWorkPass_producesItsOwnRenewalDeadline_equalToItsExpiryDate() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        business.setGstRegistered(false);
+
+        WorkPass pass1 = new WorkPass();
+        pass1.setExpiryDate(LocalDate.of(2026, 9, 1));
+
+        WorkPass pass2 = new WorkPass();
+        pass2.setExpiryDate(LocalDate.of(2027, 3, 15));
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, List.of(pass1, pass2), LocalDate.of(2026, 2, 15));
+
+        List<LocalDate> workPassDueDates = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.WORK_PASS_RENEWAL)
+                .map(Deadline::getDueDate)
+                .toList();
+
+        assertEquals(2, workPassDueDates.size());
+        assertTrue(workPassDueDates.contains(LocalDate.of(2026, 9, 1)));
+        assertTrue(workPassDueDates.contains(LocalDate.of(2027, 3, 15)));
     }
 }
